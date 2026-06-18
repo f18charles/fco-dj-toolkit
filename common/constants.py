@@ -1,0 +1,22 @@
+"""
+Common constants used across future FCO Django Kit modules.
+"""
+
+# User Statuses
+USER_STATUS_ACTIVE = "active"
+USER_STATUS_INACTIVE = "inactive"
+USER_STATUS_SUSPENDED = "suspended"
+
+# Pagination Defaults
+PAGINATION_DEFAULT_PAGE_SIZE = 20
+PAGINATION_MAX_PAGE_SIZE = 100
+
+# Common String Limits (Field Lengths)
+MAX_LENGTH_NAME = 255
+MAX_LENGTH_EMAIL = 254
+MAX_LENGTH_SLUG = 255
+MAX_LENGTH_PHONE = 30
+MAX_LENGTH_STATUS = 50
+MAX_LENGTH_TITLE = 255
+MAX_LENGTH_CODE = 20
+MAX_LENGTH_DESCRIPTION = 1024
