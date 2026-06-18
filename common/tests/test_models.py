@@ -172,7 +172,8 @@ class BaseServiceTestCase(TransactionTestCase):
         fetched = self.service.get_instance(obj.pk)
         self.assertEqual(fetched.name, "Lookup Me")
 
-        with self.assertRaises(ConcreteServiceSoftDeleteModel.DoesNotExist):
+        from common.exceptions import NotFoundException
+        with self.assertRaises(NotFoundException):
             self.service.get_instance(999999)
 
     def test_service_update_instance(self):
