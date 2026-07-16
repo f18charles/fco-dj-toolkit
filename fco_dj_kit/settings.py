@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'common.apps.CommonConfig',
     'users.apps.UsersConfig',
     'authentication.apps.AuthenticationConfig',
+    'permissions.apps.PermissionsConfig',
 ]
 
 MIDDLEWARE = [

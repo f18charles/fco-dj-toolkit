@@ -104,3 +104,28 @@ permission_checked = Signal()
 # @receiver(permission_checked)
 # def log_permission_checked(sender, user, codename, result, **kwargs):
 #     logger.debug(f"Permission check: user={user}, permission={codename}, allowed={result}")
+
+
+def _clear_cache_on_change(sender, instance, **kwargs):
+    """Clear user permission cache when roles or permissions change."""
+    user = getattr(instance, "user", None)
+    if user and hasattr(user, "_permissions_cache"):
+        try:
+            del user._permissions_cache
+        except AttributeError:
+            pass
+
+
+def connect_cache_invalidation_signals():
+    """Connect post_save and post_delete signals for cache invalidation."""
+    from django.db.models.signals import post_save, post_delete
+    from permissions.models import UserRole, UserPermission
+
+    post_save.connect(_clear_cache_on_change, sender=UserRole)
+    post_delete.connect(_clear_cache_on_change, sender=UserRole)
+    post_save.connect(_clear_cache_on_change, sender=UserPermission)
+    post_delete.connect(_clear_cache_on_change, sender=UserPermission)
+
+
+connect_cache_invalidation_signals()
+
