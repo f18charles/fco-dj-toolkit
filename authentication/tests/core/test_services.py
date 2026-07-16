@@ -198,10 +198,12 @@ def test_password_reset_invalid_or_expired_token() -> None:
 
 @pytest.mark.django_db
 def test_email_verification_flow() -> None:
-    user = UserFactory(email="verify@example.com")
-    # Simulate custom attribute on user model
-    user.is_email_verified = False
+    from django.contrib.auth import get_user_model
+    UserModel = get_user_model()
+    # Simulate custom attribute on user model class
+    UserModel.is_email_verified = False
     
+    user = UserFactory(email="verify@example.com")
     verify_data = {}
 
     def on_verification_requested(sender, user, token, uid, **kwargs):
@@ -233,10 +235,12 @@ def test_email_verification_flow() -> None:
         
         assert verified_user_instance == user
         # Check if attribute got updated
-        assert getattr(user, "is_email_verified", False) is True
+        assert getattr(verified_user_instance, "is_email_verified", False) is True
     finally:
         email_verification_requested.disconnect(on_verification_requested)
         email_verified.disconnect(on_email_verified)
+        if hasattr(UserModel, "is_email_verified"):
+            delattr(UserModel, "is_email_verified")
 
 
 @pytest.mark.django_db
