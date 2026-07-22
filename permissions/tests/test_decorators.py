@@ -65,6 +65,7 @@ class TestDecorators:
         assert response.status_code == 302
         assert "login" in response["Location"]
 
+    @pytest.mark.django_db(transaction=True)
     def test_permission_required_async_view(self) -> None:
         user = UserFactory()
         PermissionFactory(codename="posts.edit")
