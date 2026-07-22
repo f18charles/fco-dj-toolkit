@@ -126,8 +126,68 @@ def audit_role_assignment(sender, user, role, granted_by, **kwargs):
 
 ---
 
-## v2 Roadmap
+## What's New in v2
 
-- **Object-Level Permissions:** Extend authorization evaluation to individual model instances.
-- **Organization Scoping:** Scope role assignments and permissions to multi-tenant organization instances.
-- **Permission Groups:** Introduce named permission groups for simplified batch permission management.
+- **Object-Level Permissions (`ObjectPermission` & `ObjectPermissionService`)**: Grant permissions on specific model instances via `GenericForeignKey`.
+- **Generic Scope System (`ScopedUserRole` & `ScopedPermissionService`)**: Scope role assignments to any model instance (such as organizations or projects).
+- **Display Permission Groups (`PermissionGroup`)**: Name and organize sets of permissions for admin UI display.
+- **Cross-Request Caching**: Opt-in Redis-backed caching layer (`permissions.cache`) with instant signal invalidation.
+- **Template Tags (`{% load permissions_tags %}`)**: Declarative permission checking tags (`has_permission`, `has_role`, `has_object_permission`, `has_any_permission`).
+- **Management Command**: `clean_expired_assignments` for purging expired roles and grants.
+- **DRF End-to-End Extensions**: `HasObjectPermission` and `HasScopedPermission` for REST API views.
+
+---
+
+## v2 Usage Examples
+
+### Object-Level Permissions
+```python
+from permissions.services import ObjectPermissionService
+
+# Grant permission on a specific post object
+ObjectPermissionService.grant(user=user, codename="posts.edit", obj=post)
+
+# Check permission on specific object
+can_edit = ObjectPermissionService.has_object_permission(user=user, codename="posts.edit", obj=post)
+```
+
+### Scoped Roles
+```python
+from permissions.services import ScopedPermissionService
+
+# Assign a role scoped to an organization instance
+ScopedPermissionService.assign_scoped_role(user=user, role_name="editor", scope=org_instance)
+```
+
+### Cache Configuration
+See [docs/caching.md](file:///D:/FCO/Coding/fco-dj-toolkit/permissions/docs/caching.md) for full setup instructions.
+```python
+PERMISSIONS_CACHE_BACKEND = "permissions"
+PERMISSIONS_CACHE_TTL = 300
+```
+
+### Template Tags
+Requires `"django.template.context_processors.request"` in `TEMPLATES` settings.
+```html
+{% load permissions_tags %}
+
+{% has_permission request.user "posts.edit" as can_edit %}
+{% if can_edit %}<a href="/edit/">Edit</a>{% endif %}
+
+{% has_object_permission request.user "posts.edit" post as can_edit_post %}
+{% if can_edit_post %}<a href="/posts/{{ post.pk }}/edit/">Edit Post</a>{% endif %}
+```
+
+### Cleaning Expired Assignments (Cron Example)
+Run daily via scheduled task:
+```bash
+python manage.py clean_expired_assignments --older-than 7
+```
+
+---
+
+## v3 Roadmap
+
+- **Explicit Deny Rules**: Support for negative permission overrides overriding grants.
+- **Multiple Role Inheritance**: Support for role graphs inheriting from multiple parent roles.
+- **Temporal Permission Snapshots**: Point-in-time security audit log snapshots.

@@ -3,8 +3,21 @@ from datetime import timedelta
 from django.utils import timezone
 from django.test import override_settings
 
-from permissions.services import PermissionService, RoleService
-from permissions.models import Permission, Role, UserPermission, UserRole, RolePermission
+from permissions.services import (
+    PermissionService,
+    RoleService,
+    ObjectPermissionService,
+    ScopedPermissionService,
+)
+from permissions.models import (
+    Permission,
+    Role,
+    UserPermission,
+    UserRole,
+    RolePermission,
+    ObjectPermission,
+    ScopedUserRole,
+)
 from permissions.exceptions import (
     PermissionNotFoundError,
     PermissionAlreadyGrantedError,
@@ -13,6 +26,10 @@ from permissions.exceptions import (
     SystemRoleProtectedError,
     InvalidPermissionCodename,
     CircularRoleInheritanceError,
+    ObjectPermissionNotFoundError,
+    ObjectPermissionAlreadyGrantedError,
+    ScopedRoleAlreadyAssignedError,
+    ScopeRequiredError,
 )
 from permissions.tests.factories import PermissionFactory, RoleFactory
 from users.tests.factories import UserFactory
@@ -270,3 +287,148 @@ class TestRoleService:
         RoleFactory(name="admin", is_system_role=True)
         with pytest.raises(SystemRoleProtectedError):
             RoleService.delete_role(role_name="admin")
+
+
+class TestPermissionServiceV2Extensions:
+    def test_has_permission_with_obj(self) -> None:
+        user = UserFactory()
+        target_obj = UserFactory()
+        PermissionFactory(codename="posts.edit")
+
+        assert PermissionService.has_permission(user=user, codename="posts.edit", obj=target_obj) is False
+
+        ObjectPermissionService.grant(user=user, codename="posts.edit", obj=target_obj)
+        assert PermissionService.has_permission(user=user, codename="posts.edit", obj=target_obj) is True
+
+    def test_has_permission_with_obj_falls_through_to_global(self) -> None:
+        user = UserFactory()
+        target_obj = UserFactory()
+        PermissionFactory(codename="posts.edit")
+        PermissionService.grant_permission_to_user(user=user, codename="posts.edit")
+
+        # User has global permission, so has_permission returns True even with obj
+        assert PermissionService.has_permission(user=user, codename="posts.edit", obj=target_obj) is True
+
+    def test_has_permission_with_scope(self) -> None:
+        user = UserFactory()
+        scope_obj = UserFactory()
+        PermissionFactory(codename="posts.edit")
+        RoleService.create_role(name="editor")
+        PermissionService.grant_permission_to_role(role_name="editor", codename="posts.edit")
+
+        # Global permission alone does not satisfy scoped check
+        PermissionService.grant_permission_to_user(user=user, codename="posts.edit")
+        assert PermissionService.has_permission(user=user, codename="posts.edit", scope=scope_obj) is False
+
+        # Assigning scoped role satisfies scoped check
+        ScopedPermissionService.assign_scoped_role(user=user, role_name="editor", scope=scope_obj)
+        assert PermissionService.has_permission(user=user, codename="posts.edit", scope=scope_obj) is True
+
+
+class TestObjectPermissionService:
+    def test_grant_happy_path(self) -> None:
+        user = UserFactory()
+        target = UserFactory()
+        PermissionFactory(codename="posts.edit")
+
+        obj_perm = ObjectPermissionService.grant(user=user, codename="posts.edit", obj=target)
+        assert obj_perm.user == user
+        assert obj_perm.permission.codename == "posts.edit"
+        assert obj_perm.content_object == target
+
+    def test_grant_duplicate_raises(self) -> None:
+        user = UserFactory()
+        target = UserFactory()
+        PermissionFactory(codename="posts.edit")
+        ObjectPermissionService.grant(user=user, codename="posts.edit", obj=target)
+
+        with pytest.raises(ObjectPermissionAlreadyGrantedError):
+            ObjectPermissionService.grant(user=user, codename="posts.edit", obj=target)
+
+    def test_grant_unknown_codename_raises(self) -> None:
+        user = UserFactory()
+        target = UserFactory()
+        with pytest.raises(PermissionNotFoundError):
+            ObjectPermissionService.grant(user=user, codename="unknown.perm", obj=target)
+
+    def test_revoke_happy_path(self) -> None:
+        user = UserFactory()
+        target = UserFactory()
+        PermissionFactory(codename="posts.edit")
+        ObjectPermissionService.grant(user=user, codename="posts.edit", obj=target)
+
+        ObjectPermissionService.revoke(user=user, codename="posts.edit", obj=target)
+        assert ObjectPermissionService.has_object_permission(user=user, codename="posts.edit", obj=target) is False
+
+    def test_revoke_not_found_raises(self) -> None:
+        user = UserFactory()
+        target = UserFactory()
+        PermissionFactory(codename="posts.edit")
+        with pytest.raises(ObjectPermissionNotFoundError):
+            ObjectPermissionService.revoke(user=user, codename="posts.edit", obj=target)
+
+    def test_has_object_permission_active_vs_expired(self) -> None:
+        user = UserFactory()
+        target = UserFactory()
+        PermissionFactory(codename="posts.edit")
+
+        past = timezone.now() - timedelta(days=1)
+        ObjectPermissionService.grant(user=user, codename="posts.edit", obj=target, expires_at=past)
+
+        assert ObjectPermissionService.has_object_permission(user=user, codename="posts.edit", obj=target) is False
+
+    def test_get_objects_user_can_access(self) -> None:
+        user = UserFactory()
+        target1 = UserFactory()
+        target2 = UserFactory()
+        PermissionFactory(codename="posts.edit")
+
+        ObjectPermissionService.grant(user=user, codename="posts.edit", obj=target1)
+        qs = ObjectPermissionService.get_objects_user_can_access(user=user, codename="posts.edit", model_class=type(target1))
+        assert list(qs) == [target1]
+
+
+class TestScopedPermissionService:
+    def test_assign_scoped_role_happy_path(self) -> None:
+        user = UserFactory()
+        scope = UserFactory()
+        RoleService.create_role(name="editor")
+
+        sr = ScopedPermissionService.assign_scoped_role(user=user, role_name="editor", scope=scope)
+        assert sr.user == user
+        assert sr.role.name == "editor"
+        assert sr.scope == scope
+
+    def test_assign_scoped_role_duplicate_raises(self) -> None:
+        user = UserFactory()
+        scope = UserFactory()
+        RoleService.create_role(name="editor")
+
+        ScopedPermissionService.assign_scoped_role(user=user, role_name="editor", scope=scope)
+        with pytest.raises(ScopedRoleAlreadyAssignedError):
+            ScopedPermissionService.assign_scoped_role(user=user, role_name="editor", scope=scope)
+
+    def test_revoke_scoped_role_happy_path(self) -> None:
+        user = UserFactory()
+        scope = UserFactory()
+        RoleService.create_role(name="editor")
+        ScopedPermissionService.assign_scoped_role(user=user, role_name="editor", scope=scope)
+
+        ScopedPermissionService.revoke_scoped_role(user=user, role_name="editor", scope=scope)
+        roles = ScopedPermissionService.get_scoped_roles_for_user(user=user, scope=scope)
+        assert roles.count() == 0
+
+    def test_get_all_permissions_for_user_in_scope_includes_parent_role(self) -> None:
+        user = UserFactory()
+        scope = UserFactory()
+        PermissionFactory(codename="posts.edit")
+
+        RoleService.create_role(name="editor")
+        PermissionService.grant_permission_to_role(role_name="editor", codename="posts.edit")
+
+        RoleService.create_role(name="admin", parent_name="editor")
+        ScopedPermissionService.assign_scoped_role(user=user, role_name="admin", scope=scope)
+
+        perms = ScopedPermissionService.get_all_permissions_for_user_in_scope(user=user, scope=scope)
+        assert "posts.edit" in perms
+

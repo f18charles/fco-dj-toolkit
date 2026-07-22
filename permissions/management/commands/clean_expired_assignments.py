@@ -22,8 +22,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        dry_run = options["dry-run"]
-        older_than_days = options["older-than"]
+        dry_run = options["dry_run"]
+        older_than_days = options["older_than"]
         now = timezone.now()
         cutoff_date = now - timedelta(days=older_than_days)
 

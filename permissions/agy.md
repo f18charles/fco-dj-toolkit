@@ -35,3 +35,5 @@
 [DONE] v2_audit — Created audit.py with copy-paste signal receiver examples for audit_logs
 [DONE] v2_drf — Added HasObjectPermission and HasScopedPermission DRF classes
 [DONE] v2_admin — Registered ObjectPermissionAdmin, ScopedUserRoleAdmin, PermissionGroupAdmin
+[V2 DONE] permissions v2 — all tests passing, v1 suite unbroken
+

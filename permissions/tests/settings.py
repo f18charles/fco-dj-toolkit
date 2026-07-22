@@ -14,3 +14,33 @@ PERMISSIONS_SUPERUSER_BYPASS = True
 ROOT_URLCONF = "permissions.tests.urls"
 LOGIN_URL = "/login/"
 
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    },
+    "permissions": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    },
+}
+
+PERMISSIONS_CACHE_BACKEND = "permissions"
+PERMISSIONS_CACHE_TTL = 60
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+            ],
+            "libraries": {
+                "permissions_tags": "permissions.templatetags.permissions_tags",
+            },
+        },
+    }
+]
+
+

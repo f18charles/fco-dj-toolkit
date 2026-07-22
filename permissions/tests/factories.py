@@ -1,7 +1,16 @@
 import factory
 
 from common.factories import BaseFactory
-from permissions.models import Permission, Role, RolePermission, UserRole, UserPermission
+from permissions.models import (
+    Permission,
+    Role,
+    RolePermission,
+    UserRole,
+    UserPermission,
+    ObjectPermission,
+    ScopedUserRole,
+    PermissionGroup,
+)
 from users.tests.factories import UserFactory
 
 
@@ -52,3 +61,34 @@ class UserPermissionFactory(BaseFactory):
     permission = factory.SubFactory(PermissionFactory)
     granted_by = None
     expires_at = None
+
+
+class ObjectPermissionFactory(BaseFactory):
+    class Meta:
+        model = ObjectPermission
+
+    user = factory.SubFactory(UserFactory)
+    permission = factory.SubFactory(PermissionFactory)
+    content_object = factory.SubFactory(UserFactory)
+    granted_by = None
+    expires_at = None
+
+
+class ScopedUserRoleFactory(BaseFactory):
+    class Meta:
+        model = ScopedUserRole
+
+    user = factory.SubFactory(UserFactory)
+    role = factory.SubFactory(RoleFactory)
+    scope = factory.SubFactory(UserFactory)
+    granted_by = None
+    expires_at = None
+
+
+class PermissionGroupFactory(BaseFactory):
+    class Meta:
+        model = PermissionGroup
+
+    name = factory.Sequence(lambda n: f"group_{n}")
+    description = "Test permission group"
+

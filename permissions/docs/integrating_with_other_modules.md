@@ -60,9 +60,54 @@ def log_permission_granted_to_user(sender, user, permission, granted_by, **kwarg
 
 ---
 
-## Future v2 Extension: `organizations`
+---
 
-In v2, multi-tenancy and organization-scoped permissions will be introduced. The `permissions` module will be extended by adding optional scoping parameters (e.g. `organization_id`) to `UserRole` and `UserPermission` without breaking the v1 core API contracts.
+## Integrating with Object-Level Permissions
+
+Consuming content modules (e.g. `posts`, `documents`) use `ObjectPermissionService` to grant permissions on specific model instances:
+
+```python
+from permissions.services import ObjectPermissionService
+
+# Granting permission on a post instance
+ObjectPermissionService.grant(
+    user=author,
+    codename="posts.edit",
+    obj=post_instance,
+    granted_by=admin_user,
+)
+
+# Checking object permission in views/services
+can_edit = ObjectPermissionService.has_object_permission(
+    user=request.user,
+    codename="posts.edit",
+    obj=post_instance,
+)
+```
+
+---
+
+## Integrating with `organizations` (Scoped Roles)
+
+When an `organizations` module is created, organization-scoped roles will use `ScopedPermissionService`:
+
+```python
+from permissions.services import ScopedPermissionService
+
+# Assigning a role scoped to an organization instance
+ScopedPermissionService.assign_scoped_role(
+    user=member,
+    role_name="organization_admin",
+    scope=organization_instance,
+    granted_by=owner,
+)
+```
+
+---
+
+## Audit Integration (`permissions/audit.py`)
+
+The `permissions/audit.py` file provides copy-paste ready signal receiver templates for connecting all v1 and v2 permission signals to an `audit_logs` module.
 
 ---
 

@@ -3,7 +3,7 @@ from django.db.models import QuerySet
 from django.contrib.auth import get_user_model
 
 from permissions.models import Permission, Role, RolePermission, UserRole, UserPermission
-from permissions.services import PermissionService
+from permissions.cache import get_user_permissions_from_cache, set_user_permissions_cache
 
 
 def get_all_permissions_for_user(user: Any) -> Set[str]:
@@ -14,13 +14,41 @@ def get_all_permissions_for_user(user: Any) -> Set[str]:
     Returns a set of codename strings.
     Uses/populates the per-user permission cache.
     """
-    # Trigger permission check or cache population
-    # Calling has_permission with a dummy/non-existent permission is a safe way
-    # to populate the cache if not already present.
-    PermissionService.has_permission(user=user, codename="_dummy.cache_populator")
+    if not hasattr(user, "_permissions_cache"):
+        cached = get_user_permissions_from_cache(user)
+        if cached is not None:
+            user._permissions_cache = cached
+        else:
+            direct_perms = list(
+                UserPermission.objects.filter(user=user)
+                .active()
+                .values_list("permission__codename", flat=True)
+            )
 
-    cached_perms = getattr(user, "_permissions_cache", set())
-    expanded_perms = set(cached_perms)
+            active_user_roles = (
+                UserRole.objects.filter(user=user)
+                .active()
+                .select_related("role__parent")
+            )
+
+            role_ids = []
+            parent_ids = []
+            for ur in active_user_roles:
+                role_ids.append(ur.role_id)
+                if ur.role and ur.role.parent_id:
+                    parent_ids.append(ur.role.parent_id)
+
+            all_role_ids = set(role_ids) | set(parent_ids)
+
+            role_perms = list(
+                RolePermission.objects.filter(role_id__in=all_role_ids)
+                .values_list("permission__codename", flat=True)
+            )
+
+            user._permissions_cache = set(direct_perms) | set(role_perms)
+            set_user_permissions_cache(user, user._permissions_cache)
+
+    expanded_perms = set(user._permissions_cache)
 
     # Perform wildcard expansion
     for perm in list(expanded_perms):

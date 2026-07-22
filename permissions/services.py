@@ -299,6 +299,10 @@ class PermissionService:
                             sender=PermissionService, user=user, codename=codename, result=True
                         )
                         return True
+                permission_checked.send(
+                    sender=PermissionService, user=user, codename=codename, result=False
+                )
+                return False
 
             # 4. Global check
             cached_perms = get_user_permissions_from_cache(user)

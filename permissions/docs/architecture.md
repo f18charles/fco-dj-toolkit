@@ -44,3 +44,20 @@ The `RBACBackend` extends Django's authentication backend system:
 - Intercepts `user.has_perm(perm)` and delegates directly to `PermissionService.has_permission(user=user, codename=perm)`.
 - Implements `has_module_perms(user_obj, app_label)` by checking if the user has any permission beginning with `app_label + "."`.
 - Does **not** perform user authentication (`authenticate()` always returns `None`), remaining completely decoupled from authentication logic.
+
+---
+
+## v2 Architecture Extensions
+
+### 1. Generic Scope System
+The `ScopedUserRole` model allows role assignments to be scoped to any target domain entity (such as projects, workspaces, or organizations) using Django's `GenericForeignKey` (`content_type` + `object_id`).
+- It is completely decoupled from future domain modules: any Django model instance can act as a scope object.
+- When an `organizations` module is created in the future, `Organization` instances will be passed as the `scope` argument to `ScopedPermissionService` without requiring changes to the permissions system.
+
+### 2. Object-Level Permission Resolution
+Object-level permissions (`ObjectPermission`) grant specific codenames on target model instances via `GenericForeignKey`.
+- **Pure Object Check**: `ObjectPermissionService.has_object_permission(user=user, codename=codename, obj=obj)` evaluates object-level grants exclusively and does not fall through to global permissions.
+- **Combined Check**: `PermissionService.has_permission(user=user, codename=codename, obj=obj)` checks `ObjectPermission` first, and falls through to global permission resolution if no object-level grant exists.
+
+### 3. Cross-Request Cache Layer
+v2 introduces an opt-in Redis-backed cross-request cache (`permissions.cache`), which stores resolved global permission sets across HTTP requests while maintaining instant signal-driven invalidation. See `docs/caching.md` for complete details.
