@@ -100,32 +100,43 @@ permission_revoked_from_role = Signal()
 # Signal sent on every permission check (runtime).
 # Arguments: user, codename, result (bool)
 permission_checked = Signal()
-# Example receiver for audit_logs / PermissionAuditMiddleware:
-# @receiver(permission_checked)
-# def log_permission_checked(sender, user, codename, result, **kwargs):
-#     logger.debug(f"Permission check: user={user}, permission={codename}, allowed={result}")
+
+# Object-level permissions signals
+object_permission_granted = Signal()  # user, permission, obj, granted_by
+object_permission_revoked = Signal()  # user, permission, obj
+object_permission_checked = Signal()  # user, codename, obj, result (bool)
+
+# Scoped role signals
+scoped_role_assigned = Signal()  # user, role, scope, granted_by
+scoped_role_revoked = Signal()  # user, role, scope
 
 
 def _clear_cache_on_change(sender, instance, **kwargs):
-    """Clear user permission cache when roles or permissions change."""
+    """Clear user permission cache when roles, permissions, object permissions, or scoped roles change."""
     user = getattr(instance, "user", None)
-    if user and hasattr(user, "_permissions_cache"):
+    if user:
+        if hasattr(user, "_permissions_cache"):
+            try:
+                del user._permissions_cache
+            except AttributeError:
+                pass
         try:
-            del user._permissions_cache
-        except AttributeError:
+            from permissions.cache import invalidate_user_permissions_cache
+            invalidate_user_permissions_cache(user)
+        except Exception:
             pass
 
 
 def connect_cache_invalidation_signals():
     """Connect post_save and post_delete signals for cache invalidation."""
     from django.db.models.signals import post_save, post_delete
-    from permissions.models import UserRole, UserPermission
+    from permissions.models import UserRole, UserPermission, ObjectPermission, ScopedUserRole
 
-    post_save.connect(_clear_cache_on_change, sender=UserRole)
-    post_delete.connect(_clear_cache_on_change, sender=UserRole)
-    post_save.connect(_clear_cache_on_change, sender=UserPermission)
-    post_delete.connect(_clear_cache_on_change, sender=UserPermission)
+    for model in (UserRole, UserPermission, ObjectPermission, ScopedUserRole):
+        post_save.connect(_clear_cache_on_change, sender=model)
+        post_delete.connect(_clear_cache_on_change, sender=model)
 
 
 connect_cache_invalidation_signals()
+
 

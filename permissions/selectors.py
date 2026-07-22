@@ -127,6 +127,81 @@ def get_expired_role_assignments() -> QuerySet[UserRole]:
     return UserRole.objects.expired()
 
 
+from permissions.models import (
+    Permission,
+    Role,
+    RolePermission,
+    UserRole,
+    UserPermission,
+    ObjectPermission,
+    ScopedUserRole,
+    PermissionGroup,
+)
+from permissions.exceptions import PermissionsModuleError
+
+
 def get_active_permission_grants(user: Any) -> QuerySet[UserPermission]:
     """Active (non-expired) direct UserPermission rows for this user."""
     return UserPermission.objects.filter(user=user).active()
+
+
+def get_object_permissions_for_user(user: Any, *, obj: Any = None) -> QuerySet[ObjectPermission]:
+    """
+    Active object-level grants for user.
+    If obj is provided, filter to that specific object.
+    """
+    qs = ObjectPermission.objects.filter(user=user).active()
+    if obj is not None:
+        qs = qs.for_object(obj)
+    return qs
+
+
+def get_users_with_permission_on_object(codename: str, obj: Any) -> QuerySet:
+    """Users with active ObjectPermission for (codename, obj)."""
+    from permissions.services import ObjectPermissionService
+    return ObjectPermissionService.get_users_with_permission_on_object(codename, obj)
+
+
+def get_scoped_roles_for_user(user: Any, *, scope: Any = None) -> QuerySet[ScopedUserRole]:
+    """
+    Active ScopedUserRole assignments for user.
+    If scope is provided, filter to that scope.
+    """
+    qs = ScopedUserRole.objects.filter(user=user).active()
+    if scope is not None:
+        qs = qs.for_scope(scope)
+    return qs
+
+
+def get_users_with_scoped_role(role_name: str, scope: Any) -> QuerySet:
+    """Users with an active ScopedUserRole for (role_name, scope)."""
+    User = get_user_model()
+    active = ScopedUserRole.objects.filter(role__name=role_name).for_scope(scope).active()
+    return User.objects.filter(pk__in=active.values_list("user_id", flat=True))
+
+
+def get_expired_object_permissions() -> QuerySet[ObjectPermission]:
+    """All expired ObjectPermission rows. For clean_expired_assignments command."""
+    return ObjectPermission.objects.expired()
+
+
+def get_expired_scoped_role_assignments() -> QuerySet[ScopedUserRole]:
+    """All expired ScopedUserRole rows. For clean_expired_assignments command."""
+    return ScopedUserRole.objects.expired()
+
+
+def get_permission_groups() -> QuerySet[PermissionGroup]:
+    """All PermissionGroup records, ordered by name."""
+    return PermissionGroup.objects.all().order_by("name")
+
+
+def get_permission_group_by_name(name: str) -> PermissionGroup:
+    """
+    Raises:
+        PermissionsModuleError: if not found.
+    """
+    try:
+        return PermissionGroup.objects.get(name=name)
+    except PermissionGroup.DoesNotExist:
+        raise PermissionsModuleError(f"Permission group '{name}' not found.")
+

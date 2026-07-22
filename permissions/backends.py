@@ -29,9 +29,11 @@ class RBACBackend:
     def has_perm(self, user_obj: Any, perm: str, obj: Any = None) -> bool:
         """
         Called by user.has_perm(). Routes to PermissionService.has_permission().
-        obj is ignored in v1 (object-level permissions are v2).
+        v2: passes obj if provided.
         """
-        return PermissionService.has_permission(user=user_obj, codename=perm)
+        return PermissionService.has_permission(user=user_obj, codename=perm, obj=obj)
+
+
 
     def has_module_perms(self, user_obj: Any, app_label: str) -> bool:
         """

@@ -63,3 +63,36 @@ class CircularRoleInheritanceError(PermissionsModuleError):
     """
     def __init__(self, message: str = "Circular role inheritance detected.", code: str = "circular_role_inheritance"):
         super().__init__(message, code)
+
+
+class ObjectPermissionNotFoundError(PermissionsModuleError):
+    """
+    Raised when an object permission is not found.
+    """
+    def __init__(self, message: str = "Object permission not found.", code: str = "object_permission_not_found"):
+        super().__init__(message, code)
+
+
+class ObjectPermissionAlreadyGrantedError(PermissionsModuleError):
+    """
+    Raised when an object permission is already granted.
+    """
+    def __init__(self, message: str = "Object permission already granted.", code: str = "object_permission_already_granted"):
+        super().__init__(message, code)
+
+
+class ScopedRoleAlreadyAssignedError(PermissionsModuleError):
+    """
+    Raised when a scoped role is already assigned to a user for a given scope.
+    """
+    def __init__(self, message: str = "Scoped role already assigned.", code: str = "scoped_role_already_assigned"):
+        super().__init__(message, code)
+
+
+class ScopeRequiredError(PermissionsModuleError):
+    """
+    Raised when a scope argument is required but missing.
+    """
+    def __init__(self, message: str = "Scope argument is required.", code: str = "scope_required"):
+        super().__init__(message, code)
+

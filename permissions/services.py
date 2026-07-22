@@ -1,9 +1,19 @@
 from typing import Any, List, Set
 from django.conf import settings
+from django.contrib.contenttypes.models import ContentType
 from django.db.models import QuerySet
 from django.db import IntegrityError
 
-from permissions.models import Permission, Role, RolePermission, UserRole, UserPermission
+from permissions.models import (
+    Permission,
+    Role,
+    RolePermission,
+    UserRole,
+    UserPermission,
+    ObjectPermission,
+    ScopedUserRole,
+    PermissionGroup,
+)
 from permissions.exceptions import (
     PermissionsModuleError,
     PermissionNotFoundError,
@@ -13,6 +23,10 @@ from permissions.exceptions import (
     SystemRoleProtectedError,
     InvalidPermissionCodename,
     CircularRoleInheritanceError,
+    ObjectPermissionNotFoundError,
+    ObjectPermissionAlreadyGrantedError,
+    ScopedRoleAlreadyAssignedError,
+    ScopeRequiredError,
 )
 from permissions.signals import (
     role_created,
@@ -24,6 +38,15 @@ from permissions.signals import (
     permission_granted_to_role,
     permission_revoked_from_role,
     permission_checked,
+    object_permission_granted,
+    object_permission_revoked,
+    object_permission_checked,
+    scoped_role_assigned,
+    scoped_role_revoked,
+)
+from permissions.cache import (
+    get_user_permissions_from_cache,
+    set_user_permissions_cache,
 )
 
 
@@ -110,6 +133,9 @@ class PermissionService:
                 granted_by=granted_by,
                 expires_at=expires_at,
             )
+            if hasattr(user, "_permissions_cache"):
+                del user._permissions_cache
+
             permission_granted_to_user.send(
                 sender=PermissionService,
                 user=user,
@@ -136,14 +162,17 @@ class PermissionService:
             raise PermissionNotFoundError(f"Permission with codename '{codename}' not found.")
 
         try:
-            user_permission = UserPermission.objects.get(user=user, permission=permission)
+            user_perm = UserPermission.objects.get(user=user, permission=permission)
         except UserPermission.DoesNotExist:
             raise PermissionsModuleError(
                 f"Permission '{codename}' is not directly granted to user."
             )
 
         try:
-            user_permission.delete()
+            user_perm.delete()
+            if hasattr(user, "_permissions_cache"):
+                del user._permissions_cache
+
             permission_revoked_from_user.send(
                 sender=PermissionService,
                 user=user,
@@ -222,30 +251,18 @@ class PermissionService:
             raise PermissionsModuleError(f"Failed to revoke permission from role: {e}")
 
     @staticmethod
-    def has_permission(*, user: Any, codename: str) -> bool:
+    def has_permission(*, user: Any, codename: str, obj: Any = None, scope: Any = None) -> bool:
         """
         Core runtime permission check. Resolution order:
-        1. If settings.PERMISSIONS_SUPERUSER_BYPASS is True (default) and
-           user.is_superuser is True: return True immediately.
-        2. Check active direct UserPermission grants (respect expires_at).
-        3. Check active UserRole assignments (respect expires_at), for each
-           role check its permissions AND its parent role's permissions
-           (single-level inheritance).
-        4. Wildcard matching: if user has "posts.*" and codename is "posts.edit",
-           return True.
-
-        Cache the resolved permission set per-request on the user object
-        (_permissions_cache attribute). Invalidated by post_save/post_delete
-        signals on UserRole and UserPermission.
-
-        Never raises. Returns False for any error condition.
+        1. Superuser bypass.
+        2. Object-level permission check (if obj is provided).
+        3. Scoped role assignment check (if scope is provided).
+        4. Global check (direct grants -> roles -> inherited -> wildcards).
         """
         try:
             is_anon = getattr(user, "is_anonymous", True)
             is_auth = getattr(user, "is_authenticated", False)
-            print(f"DEBUG: user={user}, is_anon={is_anon}, is_auth={is_auth}, codename={codename}")
             if user is None or is_anon or not is_auth:
-                print("DEBUG: Failed authentication/anonymity check")
                 permission_checked.send(
                     sender=PermissionService, user=user, codename=codename, result=False
                 )
@@ -254,72 +271,65 @@ class PermissionService:
             # 1. Superuser bypass
             bypass = getattr(settings, "PERMISSIONS_SUPERUSER_BYPASS", True)
             if bypass and getattr(user, "is_superuser", False):
-                print("DEBUG: Superuser bypass applied")
                 permission_checked.send(
                     sender=PermissionService, user=user, codename=codename, result=True
                 )
                 return True
 
-            # 2. Check/populate cache
-            if not hasattr(user, "_permissions_cache"):
-                # Active direct UserPermission grants
-                direct_perms = list(
-                    UserPermission.objects.filter(user=user)
-                    .active()
-                    .values_list("permission__codename", flat=True)
-                )
-
-                # Active UserRole assignments (and their parent roles)
-                active_user_roles = (
-                    UserRole.objects.filter(user=user)
-                    .active()
-                    .select_related("role__parent")
-                )
-
-                role_ids = []
-                parent_ids = []
-                for ur in active_user_roles:
-                    role_ids.append(ur.role_id)
-                    if ur.role.parent_id:
-                        parent_ids.append(ur.role.parent_id)
-
-                all_role_ids = set(role_ids) | set(parent_ids)
-
-                role_perms = list(
-                    RolePermission.objects.filter(role_id__in=all_role_ids)
-                    .values_list("permission__codename", flat=True)
-                )
-
-                user._permissions_cache = set(direct_perms) | set(role_perms)
-                print(f"DEBUG: populated cache for {user}: {user._permissions_cache}")
-
-            # 3. Check exact match
-            if codename in user._permissions_cache:
-                print("DEBUG: Exact match found in cache")
-                permission_checked.send(
-                    sender=PermissionService, user=user, codename=codename, result=True
-                )
-                return True
-
-            # 4. Wildcard matching
-            if "." in codename:
-                module, _ = codename.split(".", 1)
-                wildcard_codename = f"{module}.*"
-                if wildcard_codename in user._permissions_cache:
-                    print(f"DEBUG: Wildcard match found in cache: {wildcard_codename}")
+            # 2. ObjectPermission check (if obj provided)
+            if obj is not None:
+                if ObjectPermissionService.has_object_permission(user=user, codename=codename, obj=obj):
                     permission_checked.send(
                         sender=PermissionService, user=user, codename=codename, result=True
                     )
                     return True
 
-            print("DEBUG: No permission match found")
+            # 3. ScopedUserRole check (if scope provided)
+            if scope is not None:
+                scoped_perms = ScopedPermissionService.get_all_permissions_for_user_in_scope(user=user, scope=scope)
+                if codename in scoped_perms:
+                    permission_checked.send(
+                        sender=PermissionService, user=user, codename=codename, result=True
+                    )
+                    return True
+                if "." in codename:
+                    mod, _ = codename.split(".", 1)
+                    if f"{mod}.*" in scoped_perms:
+                        permission_checked.send(
+                            sender=PermissionService, user=user, codename=codename, result=True
+                        )
+                        return True
+
+            # 4. Global check
+            cached_perms = get_user_permissions_from_cache(user)
+            if cached_perms is not None:
+                user._permissions_cache = cached_perms
+
+            if not hasattr(user, "_permissions_cache"):
+                from permissions.selectors import get_all_permissions_for_user
+                user._permissions_cache = get_all_permissions_for_user(user)
+                set_user_permissions_cache(user, user._permissions_cache)
+
+            if codename in user._permissions_cache:
+                permission_checked.send(
+                    sender=PermissionService, user=user, codename=codename, result=True
+                )
+                return True
+
+            if "." in codename:
+                module, _ = codename.split(".", 1)
+                wildcard_codename = f"{module}.*"
+                if wildcard_codename in user._permissions_cache:
+                    permission_checked.send(
+                        sender=PermissionService, user=user, codename=codename, result=True
+                    )
+                    return True
+
             permission_checked.send(
                 sender=PermissionService, user=user, codename=codename, result=False
             )
             return False
-        except Exception as e:
-            print(f"DEBUG: Exception in has_permission: {e}")
-            # Never raises, return False on error
+        except Exception:
             return False
 
     @staticmethod
@@ -337,6 +347,272 @@ class PermissionService:
             if not PermissionService.has_permission(user=user, codename=cn):
                 return False
         return True
+
+
+class ObjectPermissionService:
+    """
+    Service class handling object-level permissions.
+    """
+
+    @staticmethod
+    def grant(
+        *, user: Any, codename: str, obj: Any, granted_by: Any = None, expires_at: Any = None
+    ) -> ObjectPermission:
+        try:
+            permission = Permission.objects.get(codename=codename)
+        except Permission.DoesNotExist:
+            raise PermissionNotFoundError(f"Permission with codename '{codename}' not found.")
+
+        ct = ContentType.objects.get_for_model(obj)
+        object_id = str(obj.pk)
+
+        try:
+            op, created = ObjectPermission.objects.get_or_create(
+                user=user,
+                permission=permission,
+                content_type=ct,
+                object_id=object_id,
+                defaults={
+                    "granted_by": granted_by,
+                    "expires_at": expires_at,
+                },
+            )
+            if not created:
+                raise ObjectPermissionAlreadyGrantedError(
+                    f"Object permission '{codename}' already granted to user on object."
+                )
+            object_permission_granted.send(
+                sender=ObjectPermissionService,
+                user=user,
+                permission=permission,
+                obj=obj,
+                granted_by=granted_by,
+            )
+            return op
+        except ObjectPermissionAlreadyGrantedError:
+            raise
+        except Exception as e:
+            raise PermissionsModuleError(f"Failed to grant object permission: {e}")
+
+    @staticmethod
+    def revoke(*, user: Any, codename: str, obj: Any) -> None:
+        try:
+            permission = Permission.objects.get(codename=codename)
+        except Permission.DoesNotExist:
+            raise PermissionNotFoundError(f"Permission with codename '{codename}' not found.")
+
+        ct = ContentType.objects.get_for_model(obj)
+        object_id = str(obj.pk)
+
+        try:
+            op = ObjectPermission.objects.get(
+                user=user,
+                permission=permission,
+                content_type=ct,
+                object_id=object_id,
+            )
+        except ObjectPermission.DoesNotExist:
+            raise ObjectPermissionNotFoundError(
+                f"Object permission '{codename}' is not granted to user on object."
+            )
+
+        try:
+            op.delete()
+            object_permission_revoked.send(
+                sender=ObjectPermissionService,
+                user=user,
+                permission=permission,
+                obj=obj,
+            )
+        except Exception as e:
+            raise PermissionsModuleError(f"Failed to revoke object permission: {e}")
+
+    @staticmethod
+    def has_object_permission(*, user: Any, codename: str, obj: Any) -> bool:
+        """
+        Check if user has `codename` on the specific object `obj`.
+        Does NOT fall through to global permissions.
+        Never raises. Returns False for any error condition.
+        """
+        try:
+            is_anon = getattr(user, "is_anonymous", True)
+            is_auth = getattr(user, "is_authenticated", False)
+            if user is None or is_anon or not is_auth:
+                object_permission_checked.send(
+                    sender=ObjectPermissionService, user=user, codename=codename, obj=obj, result=False
+                )
+                return False
+
+            ct = ContentType.objects.get_for_model(obj)
+            object_id = str(obj.pk)
+            exists = ObjectPermission.objects.filter(
+                user=user,
+                permission__codename=codename,
+                content_type=ct,
+                object_id=object_id,
+            ).active().exists()
+
+            object_permission_checked.send(
+                sender=ObjectPermissionService, user=user, codename=codename, obj=obj, result=exists
+            )
+            return exists
+        except Exception:
+            return False
+
+    @staticmethod
+    def get_users_with_permission_on_object(codename: str, obj: Any) -> QuerySet:
+        """Return all users who have `codename` on object `obj` (active grants only)."""
+        try:
+            ct = ContentType.objects.get_for_model(obj)
+            object_id = str(obj.pk)
+            user_ids = ObjectPermission.objects.filter(
+                permission__codename=codename,
+                content_type=ct,
+                object_id=object_id,
+            ).active().values_list("user_id", flat=True)
+            from django.contrib.auth import get_user_model
+            UserModel = get_user_model()
+            return UserModel.objects.filter(pk__in=list(user_ids))
+        except Exception as e:
+            raise PermissionsModuleError(f"Failed to get users with permission on object: {e}")
+
+    @staticmethod
+    def get_objects_user_can_access(user: Any, codename: str, model_class: Any) -> QuerySet:
+        """
+        Return a queryset of `model_class` instances that `user` has `codename` permission on via ObjectPermission.
+        Does NOT include objects accessed via global permissions.
+        """
+        try:
+            ct = ContentType.objects.get_for_model(model_class)
+            object_ids = ObjectPermission.objects.filter(
+                user=user,
+                permission__codename=codename,
+                content_type=ct,
+            ).active().values_list("object_id", flat=True)
+            return model_class.objects.filter(pk__in=list(object_ids))
+        except Exception as e:
+            raise PermissionsModuleError(f"Failed to get objects user can access: {e}")
+
+
+class ScopedPermissionService:
+    """
+    Service class handling scoped role assignments and permissions.
+    """
+
+    @staticmethod
+    def assign_scoped_role(
+        *, user: Any, role_name: str, scope: Any, granted_by: Any = None, expires_at: Any = None
+    ) -> ScopedUserRole:
+        if scope is None:
+            raise ScopeRequiredError("Scope object is required for scoped role assignment.")
+        try:
+            role = Role.objects.get(name=role_name)
+        except Role.DoesNotExist:
+            raise RoleNotFoundError(f"Role '{role_name}' not found.")
+
+        ct = ContentType.objects.get_for_model(scope)
+        object_id = str(scope.pk)
+
+        try:
+            sur, created = ScopedUserRole.objects.get_or_create(
+                user=user,
+                role=role,
+                content_type=ct,
+                object_id=object_id,
+                defaults={
+                    "granted_by": granted_by,
+                    "expires_at": expires_at,
+                },
+            )
+            if not created:
+                raise ScopedRoleAlreadyAssignedError(
+                    f"Role '{role_name}' is already assigned to user within scope."
+                )
+
+            if hasattr(user, "_permissions_cache"):
+                del user._permissions_cache
+
+            scoped_role_assigned.send(
+                sender=ScopedPermissionService,
+                user=user,
+                role=role,
+                scope=scope,
+                granted_by=granted_by,
+            )
+            return sur
+        except ScopedRoleAlreadyAssignedError:
+            raise
+        except Exception as e:
+            raise PermissionsModuleError(f"Failed to assign scoped role: {e}")
+
+    @staticmethod
+    def revoke_scoped_role(*, user: Any, role_name: str, scope: Any) -> None:
+        if scope is None:
+            raise ScopeRequiredError("Scope object is required for scoped role revocation.")
+        try:
+            role = Role.objects.get(name=role_name)
+        except Role.DoesNotExist:
+            raise RoleNotFoundError(f"Role '{role_name}' not found.")
+
+        ct = ContentType.objects.get_for_model(scope)
+        object_id = str(scope.pk)
+
+        try:
+            sur = ScopedUserRole.objects.get(
+                user=user,
+                role=role,
+                content_type=ct,
+                object_id=object_id,
+            )
+        except ScopedUserRole.DoesNotExist:
+            raise PermissionsModuleError(
+                f"Scoped role '{role_name}' is not assigned to user within scope."
+            )
+
+        try:
+            sur.delete()
+            if hasattr(user, "_permissions_cache"):
+                del user._permissions_cache
+
+            scoped_role_revoked.send(
+                sender=ScopedPermissionService,
+                user=user,
+                role=role,
+                scope=scope,
+            )
+        except Exception as e:
+            raise PermissionsModuleError(f"Failed to revoke scoped role: {e}")
+
+    @staticmethod
+    def get_scoped_roles_for_user(*, user: Any, scope: Any) -> QuerySet[ScopedUserRole]:
+        try:
+            return ScopedUserRole.objects.filter(user=user).for_scope(scope).active()
+        except Exception as e:
+            raise PermissionsModuleError(f"Failed to get scoped roles for user: {e}")
+
+    @staticmethod
+    def get_all_permissions_for_user_in_scope(*, user: Any, scope: Any) -> Set[str]:
+        try:
+            active_scoped_roles = (
+                ScopedUserRole.objects.filter(user=user)
+                .for_scope(scope)
+                .active()
+                .select_related("role__parent")
+            )
+            role_ids = []
+            parent_ids = []
+            for sur in active_scoped_roles:
+                role_ids.append(sur.role_id)
+                if sur.role.parent_id:
+                    parent_ids.append(sur.role.parent_id)
+
+            all_role_ids = set(role_ids) | set(parent_ids)
+            role_perms = RolePermission.objects.filter(
+                role_id__in=all_role_ids
+            ).values_list("permission__codename", flat=True)
+            return set(role_perms)
+        except Exception as e:
+            raise PermissionsModuleError(f"Failed to resolve permissions in scope: {e}")
 
 
 class RoleService:

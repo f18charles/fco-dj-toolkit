@@ -127,3 +127,69 @@ def all_permissions_required(codenames: List[str], raise_exception: bool = True)
                 return view_func(request, *args, **kwargs)
             return sync_wrapper
     return decorator
+
+
+def object_permission_required(
+    codename: str, get_object_func: Callable = None, raise_exception: bool = True
+) -> Callable:
+    """
+    Decorator for function-based views that checks an object-level permission.
+    """
+    def decorator(view_func: Callable) -> Callable:
+        def _resolve_obj(request: Any, args: tuple, kwargs: dict) -> Any:
+            if get_object_func is not None:
+                return get_object_func(request, *args, **kwargs)
+            if hasattr(view_func, "get_object"):
+                return view_func.get_object(request, *args, **kwargs)
+            raise ValueError("No get_object_func provided and view_func has no get_object method.")
+
+        if inspect.iscoroutinefunction(view_func):
+            @wraps(view_func)
+            async def async_wrapper(request: Any, *args: Any, **kwargs: Any) -> Any:
+                obj = await sync_to_async(_resolve_obj)(request, args, kwargs)
+                has_perm = await sync_to_async(PermissionService.has_permission)(
+                    user=request.user, codename=codename, obj=obj
+                )
+                if not has_perm:
+                    return _handle_unauthorized(request, raise_exception)
+                return await view_func(request, *args, **kwargs)
+            return async_wrapper
+        else:
+            @wraps(view_func)
+            def sync_wrapper(request: Any, *args: Any, **kwargs: Any) -> Any:
+                obj = _resolve_obj(request, args, kwargs)
+                if not PermissionService.has_permission(user=request.user, codename=codename, obj=obj):
+                    return _handle_unauthorized(request, raise_exception)
+                return view_func(request, *args, **kwargs)
+            return sync_wrapper
+    return decorator
+
+
+def scoped_permission_required(
+    codename: str, get_scope_func: Callable, raise_exception: bool = True
+) -> Callable:
+    """
+    Decorator for function-based views that checks a permission within a scope.
+    """
+    def decorator(view_func: Callable) -> Callable:
+        if inspect.iscoroutinefunction(view_func):
+            @wraps(view_func)
+            async def async_wrapper(request: Any, *args: Any, **kwargs: Any) -> Any:
+                scope = await sync_to_async(get_scope_func)(request, *args, **kwargs)
+                has_perm = await sync_to_async(PermissionService.has_permission)(
+                    user=request.user, codename=codename, scope=scope
+                )
+                if not has_perm:
+                    return _handle_unauthorized(request, raise_exception)
+                return await view_func(request, *args, **kwargs)
+            return async_wrapper
+        else:
+            @wraps(view_func)
+            def sync_wrapper(request: Any, *args: Any, **kwargs: Any) -> Any:
+                scope = get_scope_func(request, *args, **kwargs)
+                if not PermissionService.has_permission(user=request.user, codename=codename, scope=scope):
+                    return _handle_unauthorized(request, raise_exception)
+                return view_func(request, *args, **kwargs)
+            return sync_wrapper
+    return decorator
+

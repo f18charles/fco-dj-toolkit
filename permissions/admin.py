@@ -1,6 +1,15 @@
 from django.contrib import admin
+from permissions.models import (
+    Permission,
+    Role,
+    RolePermission,
+    UserRole,
+    UserPermission,
+    ObjectPermission,
+    ScopedUserRole,
+    PermissionGroup,
+)
 
-from permissions.models import Permission, Role, RolePermission, UserRole, UserPermission
 
 
 @admin.register(Permission)
@@ -39,4 +48,28 @@ class UserRoleAdmin(admin.ModelAdmin):
 class UserPermissionAdmin(admin.ModelAdmin):
     list_display = ("user", "permission", "granted_by", "expires_at", "created_at")
     search_fields = ("user__email", "permission__codename")
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(ObjectPermission)
+class ObjectPermissionAdmin(admin.ModelAdmin):
+    list_display = ("user", "permission", "content_type", "object_id", "expires_at", "created_at")
+    list_filter = ("content_type", "permission")
+    search_fields = ("user__email", "permission__codename", "object_id")
+    readonly_fields = ("content_type", "object_id", "created_at", "updated_at")
+
+
+@admin.register(ScopedUserRole)
+class ScopedUserRoleAdmin(admin.ModelAdmin):
+    list_display = ("user", "role", "content_type", "object_id", "expires_at", "created_at")
+    list_filter = ("role", "content_type")
+    search_fields = ("user__email", "role__name")
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(PermissionGroup)
+class PermissionGroupAdmin(admin.ModelAdmin):
+    list_display = ("name", "created_at")
+    search_fields = ("name",)
+    filter_horizontal = ("permissions",)
     readonly_fields = ("created_at", "updated_at")

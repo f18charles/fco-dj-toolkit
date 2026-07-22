@@ -72,3 +72,39 @@ class HasAnyPermission(BasePermission):
         if not codenames:
             return False
         return PermissionService.has_any_permission(user=request.user, codenames=codenames)
+
+
+class HasObjectPermission(BasePermission):
+    """
+    DRF object-level permission class.
+    """
+    required_permission: str = ""
+
+    def has_permission(self, request: Any, view: Any) -> bool:
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request: Any, view: Any, obj: Any) -> bool:
+        codename = self.required_permission or getattr(view, "required_permission", "")
+        if not codename:
+            return False
+        from permissions.services import ObjectPermissionService
+        return ObjectPermissionService.has_object_permission(user=request.user, codename=codename, obj=obj)
+
+
+class HasScopedPermission(BasePermission):
+    """
+    DRF permission class for scoped permissions.
+    View must implement get_permission_scope(request) -> model instance.
+    """
+    required_permission: str = ""
+
+    def has_permission(self, request: Any, view: Any) -> bool:
+        codename = self.required_permission or getattr(view, "required_permission", "")
+        if not codename:
+            return False
+        get_scope = getattr(view, "get_permission_scope", None)
+        if not callable(get_scope):
+            return False
+        scope = get_scope()
+        return PermissionService.has_permission(user=request.user, codename=codename, scope=scope)
+

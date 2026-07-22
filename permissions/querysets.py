@@ -64,3 +64,62 @@ class UserPermissionQuerySet(BaseQuerySet):
     def expired(self) -> "UserPermissionQuerySet":
         now = timezone.now()
         return self.filter(expires_at__isnull=False, expires_at__lte=now)
+
+
+class ObjectPermissionQuerySet(BaseQuerySet):
+    """
+    QuerySet for ObjectPermission model.
+    """
+    def for_user(self, user) -> "ObjectPermissionQuerySet":
+        return self.filter(user=user)
+
+    def for_object(self, obj) -> "ObjectPermissionQuerySet":
+        from django.contrib.contenttypes.models import ContentType
+        ct = ContentType.objects.get_for_model(obj)
+        return self.filter(content_type=ct, object_id=str(obj.pk))
+
+    def for_permission(self, codename: str) -> "ObjectPermissionQuerySet":
+        return self.filter(permission__codename=codename)
+
+    def active(self) -> "ObjectPermissionQuerySet":
+        now = timezone.now()
+        return self.filter(expires_at__isnull=True) | self.filter(expires_at__gt=now)
+
+    def expired(self) -> "ObjectPermissionQuerySet":
+        now = timezone.now()
+        return self.filter(expires_at__isnull=False, expires_at__lte=now)
+
+
+class ScopedUserRoleQuerySet(BaseQuerySet):
+    """
+    QuerySet for ScopedUserRole model.
+    """
+    def for_user(self, user) -> "ScopedUserRoleQuerySet":
+        return self.filter(user=user)
+
+    def for_scope(self, scope_obj) -> "ScopedUserRoleQuerySet":
+        from django.contrib.contenttypes.models import ContentType
+        ct = ContentType.objects.get_for_model(scope_obj)
+        return self.filter(content_type=ct, object_id=str(scope_obj.pk))
+
+    def for_role(self, role) -> "ScopedUserRoleQuerySet":
+        if isinstance(role, str):
+            return self.filter(role__name=role)
+        return self.filter(role=role)
+
+    def active(self) -> "ScopedUserRoleQuerySet":
+        now = timezone.now()
+        return self.filter(expires_at__isnull=True) | self.filter(expires_at__gt=now)
+
+    def expired(self) -> "ScopedUserRoleQuerySet":
+        now = timezone.now()
+        return self.filter(expires_at__isnull=False, expires_at__lte=now)
+
+
+class PermissionGroupQuerySet(BaseQuerySet):
+    """
+    QuerySet for PermissionGroup model.
+    """
+    def containing_permission(self, codename: str) -> "PermissionGroupQuerySet":
+        return self.filter(permissions__codename=codename)
+

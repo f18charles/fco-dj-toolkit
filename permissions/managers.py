@@ -5,6 +5,9 @@ from permissions.querysets import (
     RoleQuerySet,
     UserRoleQuerySet,
     UserPermissionQuerySet,
+    ObjectPermissionQuerySet,
+    ScopedUserRoleQuerySet,
+    PermissionGroupQuerySet,
 )
 
 
@@ -81,3 +84,64 @@ class UserPermissionManager(BaseManager):
 
     def expired(self) -> UserPermissionQuerySet:
         return self.get_queryset().expired()
+
+
+class ObjectPermissionManager(BaseManager):
+    """
+    Manager for ObjectPermission model.
+    """
+
+    def get_queryset(self) -> ObjectPermissionQuerySet:
+        return ObjectPermissionQuerySet(self.model, using=self._db)
+
+    def for_user(self, user) -> ObjectPermissionQuerySet:
+        return self.get_queryset().for_user(user)
+
+    def for_object(self, obj) -> ObjectPermissionQuerySet:
+        return self.get_queryset().for_object(obj)
+
+    def for_permission(self, codename: str) -> ObjectPermissionQuerySet:
+        return self.get_queryset().for_permission(codename)
+
+    def active(self) -> ObjectPermissionQuerySet:
+        return self.get_queryset().active()
+
+    def expired(self) -> ObjectPermissionQuerySet:
+        return self.get_queryset().expired()
+
+
+class ScopedUserRoleManager(BaseManager):
+    """
+    Manager for ScopedUserRole model.
+    """
+
+    def get_queryset(self) -> ScopedUserRoleQuerySet:
+        return ScopedUserRoleQuerySet(self.model, using=self._db)
+
+    def for_user(self, user) -> ScopedUserRoleQuerySet:
+        return self.get_queryset().for_user(user)
+
+    def for_scope(self, scope_obj) -> ScopedUserRoleQuerySet:
+        return self.get_queryset().for_scope(scope_obj)
+
+    def for_role(self, role) -> ScopedUserRoleQuerySet:
+        return self.get_queryset().for_role(role)
+
+    def active(self) -> ScopedUserRoleQuerySet:
+        return self.get_queryset().active()
+
+    def expired(self) -> ScopedUserRoleQuerySet:
+        return self.get_queryset().expired()
+
+
+class PermissionGroupManager(BaseManager):
+    """
+    Manager for PermissionGroup model.
+    """
+
+    def get_queryset(self) -> PermissionGroupQuerySet:
+        return PermissionGroupQuerySet(self.model, using=self._db)
+
+    def containing_permission(self, codename: str) -> PermissionGroupQuerySet:
+        return self.get_queryset().containing_permission(codename)
+
